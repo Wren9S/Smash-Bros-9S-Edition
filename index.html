@@ -808,7 +808,6 @@
         </div>
         <div class="map-info">
           <div class="map-name">SCIENCE</div>
-          <div class="map-desc">Floating platforms in a lab. Hazard: periodic lightning!</div>
         </div>
       </div>
       <div class="map-card" id="mapSocial">
@@ -817,7 +816,6 @@
         </div>
         <div class="map-info">
           <div class="map-name">SOCIAL STUDIES</div>
-          <div class="map-desc">Ancient ruins stage. Hazard: rolling boulder!</div>
         </div>
       </div>
       <div class="map-card" id="mapEnglish">
@@ -826,7 +824,14 @@
         </div>
         <div class="map-info">
           <div class="map-name">ENGLISH</div>
-          <div class="map-desc">Library shelves & open books. Hazard: falling ink blots!</div>
+        </div>
+      </div>
+      <div class="map-card" id="mapMath">
+        <div class="map-preview map-math" style="background:linear-gradient(135deg,#1a0a3a,#0d1a3a)">
+          ➕➗🔢
+        </div>
+        <div class="map-info">
+          <div class="map-name">MATH</div>
         </div>
       </div>
     </div>
@@ -1120,7 +1125,7 @@ function renderCharGrid() {
       ${selected ? '<div class="selected-indicator">SELECTED</div>' : ''}
       ${!unlocked ? '<div class="lock-icon">🔒</div>' : ''}
       <div class="char-portrait" style="background:linear-gradient(135deg,${char.color}44,${char.altColor}22)">${portraitHTML}</div>
-      <div class="char-name">${unlocked ? char.name : '???'}</div>
+      <div class="char-name">${char.name}</div>
       ${!unlocked ? '<div style="font-size:0.75rem;color:#555;letter-spacing:1px;text-transform:uppercase;">Locked</div>' : ''}
     `;
 
@@ -1335,8 +1340,35 @@ function buildMap(name, cw, ch) {
       decor: 'social',
       boulder: null
     };
-  } else {
-    // English: library shelves — open books as platforms, stacked shelf levels
+  } else if (name === 'math') {
+    // Math: number line floor, floating equation platforms, grid background
+    return {
+      bgColor: '#0a0520',
+      bgColor2: '#0d0a2e',
+      bgColor3: '#1a1050',
+      platforms: [
+        // Main number line floor
+        { x: WW*0.04, y: WH*0.80, w: WW*0.92, h: 22, main: true },
+        // Fraction platforms (paired, like numerator/denominator)
+        { x: WW*0.10, y: WH*0.63, w: WW*0.14, h: 14 },
+        { x: WW*0.10, y: WH*0.54, w: WW*0.14, h: 14 },
+        { x: WW*0.76, y: WH*0.63, w: WW*0.14, h: 14 },
+        { x: WW*0.76, y: WH*0.54, w: WW*0.14, h: 14 },
+        // Centre equals sign platform
+        { x: WW*0.38, y: WH*0.60, w: WW*0.24, h: 14 },
+        { x: WW*0.38, y: WH*0.51, w: WW*0.24, h: 14 },
+        // High platforms
+        { x: WW*0.20, y: WH*0.38, w: WW*0.14, h: 14 },
+        { x: WW*0.66, y: WH*0.38, w: WW*0.14, h: 14 },
+        { x: WW*0.42, y: WH*0.26, w: WW*0.16, h: 14 },
+      ],
+      hazard: 'equation',
+      hazardTimer: 0,
+      hazardInterval: 460,
+      decor: 'math',
+      equations: []
+    };
+  } else { // English: open books as platforms, stacked shelf levels
     return {
       bgColor: '#1a0e06',
       bgColor2: '#2e1a08',
@@ -1713,8 +1745,10 @@ class Player {
   takeHit(damage, kbX, kbY, rawDmg) {
     if (this.invincible > 0) return;
     this.damage += damage;
-    this.vx = kbX;
-    this.vy = kbY;
+    // Higher % = more knockback (scale by current damage after adding)
+    const dmgScale = 1 + this.damage / 80;
+    this.vx = kbX * dmgScale;
+    this.vy = kbY * dmgScale;
     this.grounded = false;
     this.attacking = false;
     this.attackTimer = 0;
@@ -2215,7 +2249,32 @@ class Game {
       });
     }
 
-    this.hazardEffects = this.hazardEffects.filter(e => e.life > 0);
+    if (stage.hazard === 'equation') {
+      if (!stage.equations) stage.equations = [];
+      if (stage.hazardTimer >= stage.hazardInterval) {
+        stage.hazardTimer = 0;
+        // Drop a number block from random x position
+        const nums = ['1','2','3','4','5','6','7','8','9','π','∞','√'];
+        const x = WORLD_W * (0.08 + Math.random() * 0.84);
+        stage.equations.push({ x, y: -40, vy: 3 + Math.random() * 3, label: nums[Math.floor(Math.random()*nums.length)], alive: true, w: 44, h: 44 });
+      }
+      stage.equations = stage.equations.filter(e => e.alive);
+      stage.equations.forEach(eq => {
+        eq.y += eq.vy;
+        eq.vy += 0.22;
+        [this.player, this.bot].forEach(p => {
+          if (p.invincible > 0) return;
+          const dx = p.cx - eq.x, dy = p.cy - eq.y;
+          if (Math.abs(dx) < eq.w && Math.abs(dy) < eq.h) {
+            p.takeHit(10, dx * 0.25, -10, 10);
+            this.spawnParticles(eq.x, eq.y, 10, '#aa88ff', 5);
+            this.spawnParticles(eq.x, eq.y, 6, '#ffffff', 3);
+            eq.alive = false;
+          }
+        });
+        if (eq.y > WORLD_H + 100) eq.alive = false;
+      });
+    }
     this.hazardEffects.forEach(e => e.life--);
   }
 
@@ -2277,6 +2336,10 @@ class Game {
       bg.addColorStop(0, '#120a04');
       bg.addColorStop(0.5, '#2a1208');
       bg.addColorStop(1, '#4a2210');
+    } else if (this.mapName === 'math') {
+      bg.addColorStop(0, '#080318');
+      bg.addColorStop(0.5, '#0d0828');
+      bg.addColorStop(1, '#1a1050');
     } else {
       bg.addColorStop(0, '#0a1203');
       bg.addColorStop(0.5, '#1e3308');
@@ -2327,8 +2390,28 @@ class Game {
       candleGrad.addColorStop(1, 'rgba(180,80,10,0.18)');
       ctx.fillStyle = candleGrad;
       ctx.fillRect(0, WORLD_H*0.65, WORLD_W, WORLD_H*0.35);
+    } else if (this.mapName === 'math') {
+      // Graph paper grid
+      ctx.strokeStyle = 'rgba(100,80,255,0.07)';
+      ctx.lineWidth = 1;
+      for (let gx = 0; gx < WORLD_W; gx += 60) {
+        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, WORLD_H); ctx.stroke();
+      }
+      for (let gy = 0; gy < WORLD_H; gy += 60) {
+        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(WORLD_W, gy); ctx.stroke();
+      }
+      // Number line markers along the floor
+      ctx.strokeStyle = 'rgba(160,140,255,0.25)';
+      ctx.lineWidth = 2;
+      for (let i = 0; i <= 10; i++) {
+        const nx = WORLD_W * 0.04 + i * (WORLD_W * 0.92 / 10);
+        ctx.beginPath(); ctx.moveTo(nx, WORLD_H*0.75); ctx.lineTo(nx, WORLD_H*0.80); ctx.stroke();
+      }
+      // Glowing purple axis lines
+      ctx.strokeStyle = 'rgba(140,100,255,0.15)';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(WORLD_W*0.5, 0); ctx.lineTo(WORLD_W*0.5, WORLD_H*0.80); ctx.stroke();
     } else {
-      // Ancient ruins: stone pillars in background
       ctx.fillStyle = 'rgba(80,60,20,0.18)';
       for (let i = 0; i < 12; i++) {
         const px = 80 + i * (WORLD_W / 12);
@@ -2407,8 +2490,10 @@ class Game {
       } else if (this.mapName === 'english') {
         const icons = ['📖','✒️','📜','🖋️','📚','🔤','📝','🗒️'];
         ctx.fillText(icons[this.decorItems.indexOf(item) % icons.length], item.x, item.y);
+      } else if (this.mapName === 'math') {
+        const icons = ['➕','➖','✖️','➗','🔢','📐','📏','🔣'];
+        ctx.fillText(icons[this.decorItems.indexOf(item) % icons.length], item.x, item.y);
       } else {
-        const icons = ['🌍','📚','🗺️','🏛️','🌎','📜','🗿','🧭'];
         ctx.fillText(icons[this.decorItems.indexOf(item) % icons.length], item.x, item.y);
       }
     });
@@ -2537,11 +2622,35 @@ class Game {
         ctx.restore();
       });
     }
+    // Number blocks (Math map)
+    const equations = this.stage.equations;
+    if (equations) {
+      equations.forEach(eq => {
+        if (!eq.alive) return;
+        ctx.save();
+        ctx.shadowBlur = 16;
+        ctx.shadowColor = '#8866ff';
+        const grad = ctx.createLinearGradient(eq.x - eq.w/2, eq.y - eq.h/2, eq.x + eq.w/2, eq.y + eq.h/2);
+        grad.addColorStop(0, '#3a1a80');
+        grad.addColorStop(1, '#1a0a50');
+        ctx.fillStyle = grad;
+        ctx.strokeStyle = '#aa88ff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(eq.x - eq.w/2, eq.y - eq.h/2, eq.w, eq.h, 6);
+        ctx.fill();
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 22px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(eq.label, eq.x, eq.y);
+        ctx.restore();
+      });
+    }
   }
 }
-
-// ============================================================
-// HUD UPDATER
 // ============================================================
 function updateDamageHUD(g) {
   const gRef = g || game;
@@ -2739,6 +2848,7 @@ window.addEventListener('load', () => {
   document.getElementById('mapScience').addEventListener('click', () => selectMap('science'));
   document.getElementById('mapSocial').addEventListener('click', () => selectMap('social'));
   document.getElementById('mapEnglish').addEventListener('click', () => selectMap('english'));
+  document.getElementById('mapMath').addEventListener('click', () => selectMap('math'));
 
   // Result overlay
   document.getElementById('rematchBtn').addEventListener('click', rematch);
