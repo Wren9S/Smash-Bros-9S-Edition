@@ -471,7 +471,66 @@
     color: #888;
   }
 
-  /* ===== SMALL BUTTONS ===== */
+  /* ===== DIFFICULTY SELECT ===== */
+  #diffScreen {
+    background: radial-gradient(ellipse at center, #1a0a0a 0%, #050510 100%);
+    gap: 30px;
+  }
+
+  .diff-grid {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .diff-card {
+    width: 200px;
+    padding: 28px 20px;
+    border-radius: 16px;
+    border: 3px solid #333;
+    cursor: pointer;
+    transition: all 0.25s;
+    text-align: center;
+    background: rgba(255,255,255,0.03);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .diff-card:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 8px 25px rgba(255,255,255,0.15);
+  }
+
+  .diff-easy  { border-color: #44cc44; }
+  .diff-easy:hover  { border-color: #44ff44; box-shadow: 0 8px 25px rgba(68,255,68,0.3); }
+
+  .diff-medium { border-color: #ffaa00; }
+  .diff-medium:hover { border-color: #ffcc00; box-shadow: 0 8px 25px rgba(255,200,0,0.3); }
+
+  .diff-hard  { border-color: #ff3333; }
+  .diff-hard:hover  { border-color: #ff5555; box-shadow: 0 8px 25px rgba(255,50,50,0.3); }
+
+  .diff-icon { font-size: 2.8rem; }
+
+  .diff-name {
+    font-family: 'Bangers', cursive;
+    font-size: 1.6rem;
+    letter-spacing: 3px;
+  }
+  .diff-easy  .diff-name { color: #44ff44; }
+  .diff-medium .diff-name { color: #ffcc00; }
+  .diff-hard  .diff-name { color: #ff5555; }
+
+  .diff-desc {
+    font-size: 0.78rem;
+    color: #888;
+    line-height: 1.4;
+  }
+
+
   .back-btn {
     position: absolute;
     top: 20px;
@@ -845,6 +904,29 @@
     </div>
   </div>
 
+  <!-- ===== DIFFICULTY SELECT ===== -->
+  <div id="diffScreen" class="screen">
+    <button class="back-btn" id="diffBackBtn">← Back</button>
+    <div class="screen-title">CHOOSE DIFFICULTY</div>
+    <div class="diff-grid">
+      <div class="diff-card diff-easy" id="diffEasy">
+        <div class="diff-icon">😊</div>
+        <div class="diff-name">EASY</div>
+        <div class="diff-desc">Relaxed bot. Good for learning the ropes.</div>
+      </div>
+      <div class="diff-card diff-medium" id="diffMedium">
+        <div class="diff-icon">😤</div>
+        <div class="diff-name">MEDIUM</div>
+        <div class="diff-desc">Smarter and faster. Puts up a real fight.</div>
+      </div>
+      <div class="diff-card diff-hard" id="diffHard">
+        <div class="diff-icon">💀</div>
+        <div class="diff-name">HARD</div>
+        <div class="diff-desc">Twice as aggressive. Good luck.</div>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== GAME SCREEN ===== -->
   <div id="gameScreen" class="screen">
     <canvas id="gameCanvas"></canvas>
@@ -892,6 +974,9 @@
     <div id="keyHint" style="position:absolute;top:12px;left:50%;transform:translateX(-50%);font-size:0.7rem;color:rgba(255,255,255,0.35);letter-spacing:1px;pointer-events:none;font-family:'Exo 2',sans-serif;white-space:nowrap;">
       WASD / Arrows · Z X E F = Attack
     </div>
+
+    <!-- Difficulty badge -->
+    <div id="diffBadge" style="position:absolute;top:12px;right:16px;font-family:'Bangers',cursive;font-size:1rem;letter-spacing:2px;pointer-events:none;padding:3px 12px;border-radius:8px;border:2px solid;opacity:0.75;"></div>
 
     <!-- Countdown -->
     <div id="countdown">3</div>
@@ -954,7 +1039,8 @@ const STATE = {
   unlockedChars: [],
   selectedChar: null,
   packsOpened: false,
-  selectedMap: null
+  selectedMap: null,
+  difficulty: 'easy'
 };
 
 let gameLoop = null;
@@ -1159,6 +1245,11 @@ function selectMap(map) {
   STATE.selectedMap = map;
   lastMap = map;
   lastPlayerChar = STATE.selectedChar;
+  showScreen('diffScreen');
+}
+
+function selectDifficulty(diff) {
+  STATE.difficulty = diff;
   startGame();
 }
 
@@ -1186,9 +1277,18 @@ function startGame() {
   canvas.width = W;
   canvas.height = H;
 
+  // Update difficulty badge
+  const badge = document.getElementById('diffBadge');
+  const diffLabels = { easy: '😊 EASY', medium: '😤 MEDIUM', hard: '💀 HARD' };
+  const diffColors = { easy: '#44ff44', medium: '#ffcc00', hard: '#ff5555' };
+  const d = STATE.difficulty;
+  badge.textContent = diffLabels[d];
+  badge.style.color = diffColors[d];
+  badge.style.borderColor = diffColors[d];
+
   stopGame();
   gameGeneration++;
-  game = new Game(canvas, STATE.selectedChar, STATE.selectedMap);
+  game = new Game(canvas, STATE.selectedChar, STATE.selectedMap, STATE.difficulty);
   runCountdown(game, gameGeneration);
 }
 
@@ -1532,7 +1632,7 @@ class Player {
 
     // Earth throw
     this.throwCooldown = 0;
-    this.throwCooldownMax = 12; // ~0.2s at 60fps
+    this.throwCooldownMax = 30; // ~0.5s at 60fps
 
     // Hitstun
     this.hitstun = 0;
@@ -1596,7 +1696,7 @@ class Player {
     if (this.hitstun > 0) this.hitstun--;
 
     const inControl = this.hitstun <= 0;
-    const speed = this.char.speed;
+    const speed = this.char.speed * (this.isBot && this._speedMult ? this._speedMult : 1.0);
 
     // Movement
     if (inControl) {
@@ -1963,8 +2063,25 @@ class Player {
 // ============================================================
 // BOT AI
 // ============================================================
-function updateBotAI(bot, opponent, platforms) {
+function updateBotAI(bot, opponent, platforms, difficulty) {
   if (!bot.isBot) return {};
+
+  // Difficulty tuning
+  // easy:   slow reactions, frequent idles, limited jump aggression
+  // medium: moderate reactions, few idles, better jump chasing
+  // hard:   fast reactions, almost never idles, very aggressive jumps + wider attack range
+  const diff = difficulty || 'easy';
+  const aiTickMin   = diff === 'hard' ? 4  : diff === 'medium' ? 7  : 10;
+  const aiTickMax   = diff === 'hard' ? 8  : diff === 'medium' ? 12 : 20;
+  const idleChance  = diff === 'hard' ? 0.01 : diff === 'medium' ? 0.03 : 0.06;
+  const swordRange  = diff === 'hard' ? 140 : diff === 'medium' ? 120 : 110;
+  const earthRange  = diff === 'hard' ? 600 : diff === 'medium' ? 540 : 480;
+  const jumpUpChance     = diff === 'hard' ? 0.85 : diff === 'medium' ? 0.65 : 0.5;
+  const jumpAirChance    = diff === 'hard' ? 0.55 : diff === 'medium' ? 0.4  : 0.3;
+  const speedMult   = diff === 'hard' ? 2.0 : diff === 'medium' ? 1.4 : 1.0;
+
+  // Apply speed multiplier to bot's effective speed this frame via a temporary property
+  bot._speedMult = speedMult;
 
   bot.aiTimer--;
 
@@ -2009,12 +2126,12 @@ function updateBotAI(bot, opponent, platforms) {
   // --- Attack decisions run every frame (gated by player's own cooldown) ---
   // Sword: attack whenever in range — don't wait for AI tick
   if (bot.char.attackType === 'sword') {
-    if (dist < 110 && bot.attackCooldown <= 0 && bot.hitstun <= 0) {
+    if (dist < swordRange && bot.attackCooldown <= 0 && bot.hitstun <= 0) {
       attack = true;
     }
   } else if (bot.char.attackType === 'earth') {
     // Ranged: attack if not too close and not on cooldown
-    if (dist > 60 && dist < 480 && bot.throwCooldown <= 0 && bot.hitstun <= 0) {
+    if (dist > 60 && dist < earthRange && bot.throwCooldown <= 0 && bot.hitstun <= 0) {
       attack = true;
     }
   }
@@ -2032,10 +2149,10 @@ function updateBotAI(bot, opponent, platforms) {
     const input = { left: prev.left, right: prev.right, jumpJustPressed: false, attack, attackJustPressed };
     return input;
   }
-  bot.aiTimer = 10 + Math.floor(Math.random() * 10); // faster reaction: 10-20 frames
+  bot.aiTimer = aiTickMin + Math.floor(Math.random() * (aiTickMax - aiTickMin));
 
-  // Occasional idle (reduced — bot should be aggressive)
-  if (Math.random() < 0.06) {
+  // Occasional idle
+  if (Math.random() < idleChance) {
     const idle = { left: false, right: false, jumpJustPressed: false, attack, attackJustPressed };
     bot._lastInput = idle;
     return idle;
@@ -2055,10 +2172,10 @@ function updateBotAI(bot, opponent, platforms) {
 
   // Jump to reach opponent on higher platform
   if (onGround && bot.jumpsLeft > 0) {
-    if (dy < -80 && Math.random() < 0.5) jumpJustPressed = true;
+    if (dy < -80 && Math.random() < jumpUpChance) jumpJustPressed = true;
     else if (Math.random() < 0.02) jumpJustPressed = true;
   }
-  if (!onGround && bot.jumpsLeft > 0 && dy < -100 && Math.random() < 0.3) {
+  if (!onGround && bot.jumpsLeft > 0 && dy < -100 && Math.random() < jumpAirChance) {
     jumpJustPressed = true;
   }
 
@@ -2071,13 +2188,14 @@ function updateBotAI(bot, opponent, platforms) {
 // GAME CLASS
 // ============================================================
 class Game {
-  constructor(canvas, playerCharId, mapName) {
+  constructor(canvas, playerCharId, mapName, difficulty) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false });
     this.W = canvas.width;
     this.H = canvas.height;
     this.running = false;
     this.over = false;
+    this.difficulty = difficulty || 'easy';
     this.stage = buildMap(mapName, this.W, this.H);
     this.mapName = mapName;
 
@@ -2281,7 +2399,7 @@ class Game {
 
     // Update players
     this.player.update(playerInput, this.bot, this.stage.platforms, this.stage, this);
-    const botInput = updateBotAI(this.bot, this.player, this.stage.platforms);
+    const botInput = updateBotAI(this.bot, this.player, this.stage.platforms, this.difficulty);
     this.bot.update(botInput, this.player, this.stage.platforms, this.stage, this);
 
     // Check blast zones
@@ -2985,6 +3103,12 @@ window.addEventListener('load', () => {
   document.getElementById('mapEnglish').addEventListener('click', () => selectMap('english'));
   document.getElementById('mapMath').addEventListener('click', () => selectMap('math'));
   document.getElementById('mapPE').addEventListener('click', () => selectMap('pe'));
+
+  // Difficulty screen
+  document.getElementById('diffBackBtn').addEventListener('click', () => showScreen('mapScreen'));
+  document.getElementById('diffEasy').addEventListener('click', () => selectDifficulty('easy'));
+  document.getElementById('diffMedium').addEventListener('click', () => selectDifficulty('medium'));
+  document.getElementById('diffHard').addEventListener('click', () => selectDifficulty('hard'));
 
   // Result overlay
   document.getElementById('rematchBtn').addEventListener('click', rematch);
