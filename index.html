@@ -1237,22 +1237,14 @@ async function runCountdown(g, gen) {
   if (gameGeneration !== gen) return; // stale check after final await
   el.style.cssText = 'opacity:0;';
   g.running = true;
-  lastFrameTime = performance.now();
   gameLoop = requestAnimationFrame((ts) => gameStep(g, ts));
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 let lastFrameTime = 0;
-const TARGET_FRAME_MS = 1000 / 60; // ~16.67ms per frame
 function gameStep(g, timestamp) {
   if (!g || !g.running) return;
-  const delta = timestamp - lastFrameTime;
-  // Only update physics if at least one frame-worth of time has passed (~60fps cap)
-  if (delta < TARGET_FRAME_MS - 1) {
-    gameLoop = requestAnimationFrame((ts) => gameStep(g, ts));
-    return;
-  }
   lastFrameTime = timestamp;
   g.update();
   g.draw();
@@ -1460,7 +1452,7 @@ class Projectile {
     this.vy += 0.2;
     this.y += this.vy;
     this.rotation += 0.05 * Math.sign(this.vx);
-    if (this.x < -100 || this.x > 1100 || this.y > 700) this.alive = false;
+    if (this.x < -200 || this.x > WORLD_W + 200 || this.y > WORLD_H + 100) this.alive = false;
   }
   draw(ctx) {
     ctx.save();
@@ -1610,15 +1602,15 @@ class Player {
     if (inControl) {
       let moving = false;
       if (input.left) {
-        this.vx = lerp(this.vx, -speed, 0.30);
+        this.vx = lerp(this.vx, -speed, 0.55);
         this.facingRight = false;
         moving = true;
       } else if (input.right) {
-        this.vx = lerp(this.vx, speed, 0.30);
+        this.vx = lerp(this.vx, speed, 0.55);
         this.facingRight = true;
         moving = true;
       } else {
-        this.vx = lerp(this.vx, 0, this.grounded ? 0.35 : 0.12);
+        this.vx = lerp(this.vx, 0, this.grounded ? 0.55 : 0.18);
       }
 
       // Jump
@@ -1956,11 +1948,9 @@ class Player {
     ctx.fillStyle = '#8B4513';
     ctx.fillRect(dir * -20, -4, dir * 22, 8);
 
-    // Glow effect
-    ctx.strokeStyle = 'rgba(200,230,255,0.5)';
-    ctx.lineWidth = 3;
-    ctx.shadowBlur = 10;
-    ctx.shadowColor = 'rgba(150,200,255,0.8)';
+    // Glow effect (no shadow for perf - use bright stroke)
+    ctx.strokeStyle = 'rgba(200,230,255,0.6)';
+    ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(dir * 5, 0);
     ctx.lineTo(dir * swordLen, 0);
@@ -2029,18 +2019,24 @@ function updateBotAI(bot, opponent, platforms) {
     }
   }
 
+  // For earth thrower: generate a just-pressed pulse so throwEarth actually fires
+  // (throwEarth checks attackJustPressed, not attack, to avoid spam)
+  const prevAttack = bot._prevAttack || false;
+  const attackJustPressed = attack && !prevAttack;
+  bot._prevAttack = attack;
+
   // --- Movement decisions — run on a slower timer ---
   if (bot.aiTimer > 0) {
     // Still update attack and facing, but reuse last movement input
     const prev = bot._lastInput || { left: false, right: false, jumpJustPressed: false };
-    const input = { left: prev.left, right: prev.right, jumpJustPressed: false, attack };
+    const input = { left: prev.left, right: prev.right, jumpJustPressed: false, attack, attackJustPressed };
     return input;
   }
   bot.aiTimer = 10 + Math.floor(Math.random() * 10); // faster reaction: 10-20 frames
 
   // Occasional idle (reduced — bot should be aggressive)
   if (Math.random() < 0.06) {
-    const idle = { left: false, right: false, jumpJustPressed: false, attack };
+    const idle = { left: false, right: false, jumpJustPressed: false, attack, attackJustPressed };
     bot._lastInput = idle;
     return idle;
   }
@@ -2066,7 +2062,7 @@ function updateBotAI(bot, opponent, platforms) {
     jumpJustPressed = true;
   }
 
-  const input = { left, right, jumpJustPressed, attack };
+  const input = { left, right, jumpJustPressed, attack, attackJustPressed };
   bot._lastInput = input;
   return input;
 }
@@ -2077,7 +2073,7 @@ function updateBotAI(bot, opponent, platforms) {
 class Game {
   constructor(canvas, playerCharId, mapName) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
+    this.ctx = canvas.getContext('2d', { alpha: false });
     this.W = canvas.width;
     this.H = canvas.height;
     this.running = false;
@@ -2124,6 +2120,12 @@ class Game {
     // Camera: tracks midpoint between players, zooms based on distance
     this.cam = { x: (spawnX1 + spawnX2) / 2, y: spawnY, scale: 0.42 };
     this.camTarget = { x: this.cam.x, y: this.cam.y, scale: this.cam.scale };
+
+    // Pre-render static background to offscreen canvas
+    this._bgCache = document.createElement('canvas');
+    this._bgCache.width = WORLD_W;
+    this._bgCache.height = WORLD_H;
+    this._renderBgCache();
   }
 
   buildDecor() {
@@ -2138,6 +2140,120 @@ class Game {
       }
     }
     return items;
+  }
+
+  _renderBgCache() {
+    const ctx = this._bgCache.getContext('2d');
+    const WORLD_W_L = WORLD_W, WORLD_H_L = WORLD_H;
+
+    // Background gradient
+    const bg = ctx.createLinearGradient(0, 0, 0, WORLD_H_L);
+    if (this.mapName === 'science') {
+      bg.addColorStop(0, '#060d1f');
+      bg.addColorStop(0.5, '#0d2040');
+      bg.addColorStop(1, '#1a3a6a');
+    } else if (this.mapName === 'english') {
+      bg.addColorStop(0, '#120a04');
+      bg.addColorStop(0.5, '#2a1208');
+      bg.addColorStop(1, '#4a2210');
+    } else if (this.mapName === 'pe') {
+      bg.addColorStop(0, '#041a04');
+      bg.addColorStop(0.5, '#0a2e0a');
+      bg.addColorStop(1, '#124a12');
+    } else if (this.mapName === 'math') {
+      bg.addColorStop(0, '#080318');
+      bg.addColorStop(0.5, '#0d0828');
+      bg.addColorStop(1, '#1a1050');
+    } else {
+      bg.addColorStop(0, '#0a1203');
+      bg.addColorStop(0.5, '#1e3308');
+      bg.addColorStop(1, '#2e5012');
+    }
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, WORLD_W_L, WORLD_H_L);
+
+    // Map-specific background details
+    if (this.mapName === 'science') {
+      ctx.strokeStyle = 'rgba(50,100,200,0.08)';
+      ctx.lineWidth = 1;
+      for (let gx = 0; gx < WORLD_W_L; gx += 80) {
+        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, WORLD_H_L); ctx.stroke();
+      }
+      for (let gy = 0; gy < WORLD_H_L; gy += 80) {
+        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(WORLD_W_L, gy); ctx.stroke();
+      }
+      for (let i = 0; i < 6; i++) {
+        const tx = 30 + i * (WORLD_W_L / 6);
+        const grad = ctx.createLinearGradient(tx, WORLD_H_L*0.4, tx, WORLD_H_L*0.78);
+        grad.addColorStop(0, 'rgba(0,200,255,0.0)');
+        grad.addColorStop(0.5, 'rgba(0,180,255,0.12)');
+        grad.addColorStop(1, 'rgba(0,200,255,0.0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(tx - 6, WORLD_H_L*0.4, 12, WORLD_H_L*0.38);
+      }
+    } else if (this.mapName === 'english') {
+      ctx.strokeStyle = 'rgba(120,70,20,0.22)';
+      ctx.lineWidth = 8;
+      for (let i = 0; i < 9; i++) {
+        const bx = (i+1) * (WORLD_W_L / 9);
+        ctx.beginPath(); ctx.moveTo(bx, 0); ctx.lineTo(bx, WORLD_H_L*0.82); ctx.stroke();
+      }
+      ctx.strokeStyle = 'rgba(160,100,40,0.18)';
+      ctx.lineWidth = 14;
+      for (let j = 0; j < 5; j++) {
+        const by = WORLD_H_L * (0.18 + j * 0.16);
+        ctx.beginPath(); ctx.moveTo(0, by); ctx.lineTo(WORLD_W_L, by); ctx.stroke();
+      }
+      const candleGrad = ctx.createLinearGradient(0, WORLD_H_L*0.65, 0, WORLD_H_L);
+      candleGrad.addColorStop(0, 'rgba(180,90,20,0.0)');
+      candleGrad.addColorStop(1, 'rgba(180,80,10,0.18)');
+      ctx.fillStyle = candleGrad;
+      ctx.fillRect(0, WORLD_H_L*0.65, WORLD_W_L, WORLD_H_L*0.35);
+    } else if (this.mapName === 'pe') {
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(WORLD_W_L*0.5, WORLD_H_L*0.80, WORLD_W_L*0.12, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(WORLD_W_L*0.5, WORLD_H_L*0.70); ctx.lineTo(WORLD_W_L*0.5, WORLD_H_L*0.80); ctx.stroke();
+      ctx.strokeRect(WORLD_W_L*0.06, WORLD_H_L*0.72, WORLD_W_L*0.16, WORLD_H_L*0.08);
+      ctx.strokeRect(WORLD_W_L*0.78, WORLD_H_L*0.72, WORLD_W_L*0.16, WORLD_H_L*0.08);
+      ctx.fillStyle = 'rgba(30,120,30,0.07)';
+      for (let i = 0; i < 8; i++) {
+        if (i % 2 === 0) ctx.fillRect(i * (WORLD_W_L/8), 0, WORLD_W_L/8, WORLD_H_L);
+      }
+    } else if (this.mapName === 'math') {
+      ctx.strokeStyle = 'rgba(100,80,255,0.07)';
+      ctx.lineWidth = 1;
+      for (let gx = 0; gx < WORLD_W_L; gx += 60) {
+        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, WORLD_H_L); ctx.stroke();
+      }
+      for (let gy = 0; gy < WORLD_H_L; gy += 60) {
+        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(WORLD_W_L, gy); ctx.stroke();
+      }
+      ctx.strokeStyle = 'rgba(160,140,255,0.25)';
+      ctx.lineWidth = 2;
+      for (let i = 0; i <= 10; i++) {
+        const nx = WORLD_W_L * 0.04 + i * (WORLD_W_L * 0.92 / 10);
+        ctx.beginPath(); ctx.moveTo(nx, WORLD_H_L*0.75); ctx.lineTo(nx, WORLD_H_L*0.80); ctx.stroke();
+      }
+      ctx.strokeStyle = 'rgba(140,100,255,0.15)';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(WORLD_W_L*0.5, 0); ctx.lineTo(WORLD_W_L*0.5, WORLD_H_L*0.80); ctx.stroke();
+    } else {
+      ctx.fillStyle = 'rgba(80,60,20,0.18)';
+      for (let i = 0; i < 12; i++) {
+        const px = 80 + i * (WORLD_W_L / 12);
+        const ph = 120 + Math.sin(i * 1.7) * 60;
+        ctx.fillRect(px - 18, WORLD_H_L * 0.78 - ph, 36, ph);
+        ctx.fillRect(px - 22, WORLD_H_L * 0.78 - ph, 44, 12);
+      }
+      const grassGrad = ctx.createLinearGradient(0, WORLD_H_L*0.77, 0, WORLD_H_L*0.80);
+      grassGrad.addColorStop(0, 'rgba(60,130,20,0.25)');
+      grassGrad.addColorStop(1, 'rgba(40,90,10,0.0)');
+      ctx.fillStyle = grassGrad;
+      ctx.fillRect(0, WORLD_H_L*0.77, WORLD_W_L, WORLD_H_L*0.06);
+    }
   }
 
   destroy() {}
@@ -2378,7 +2494,11 @@ class Game {
   }
 
   spawnParticles(x, y, count, color, speed) {
-    for (let i = 0; i < count; i++) {
+    // Cap total particles to keep performance steady
+    const maxParticles = 120;
+    if (this.particles.length >= maxParticles) return;
+    const spawnCount = Math.min(count, maxParticles - this.particles.length);
+    for (let i = 0; i < spawnCount; i++) {
       const angle = Math.random() * Math.PI * 2;
       const spd = Math.random() * speed + 1;
       this.particles.push({
@@ -2425,129 +2545,10 @@ class Game {
     ctx.scale(this.cam.scale, this.cam.scale);
     ctx.translate(-this.cam.x, -this.cam.y);
 
-    // Background gradient across whole world
-    const bg = ctx.createLinearGradient(0, 0, 0, WORLD_H);
-    if (this.mapName === 'science') {
-      bg.addColorStop(0, '#060d1f');
-      bg.addColorStop(0.5, '#0d2040');
-      bg.addColorStop(1, '#1a3a6a');
-    } else if (this.mapName === 'english') {
-      bg.addColorStop(0, '#120a04');
-      bg.addColorStop(0.5, '#2a1208');
-      bg.addColorStop(1, '#4a2210');
-    } else if (this.mapName === 'pe') {
-      bg.addColorStop(0, '#041a04');
-      bg.addColorStop(0.5, '#0a2e0a');
-      bg.addColorStop(1, '#124a12');
-    } else if (this.mapName === 'math') {
-      bg.addColorStop(0, '#080318');
-      bg.addColorStop(0.5, '#0d0828');
-      bg.addColorStop(1, '#1a1050');
-    } else {
-      bg.addColorStop(0, '#0a1203');
-      bg.addColorStop(0.5, '#1e3308');
-      bg.addColorStop(1, '#2e5012');
-    }
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+    // Draw cached static background (single fast blit)
+    ctx.drawImage(this._bgCache, 0, 0);
 
-    // Map-specific background details
-    if (this.mapName === 'science') {
-      // Grid lines (lab floor/wall feel)
-      ctx.strokeStyle = 'rgba(50,100,200,0.08)';
-      ctx.lineWidth = 1;
-      for (let gx = 0; gx < WORLD_W; gx += 80) {
-        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, WORLD_H); ctx.stroke();
-      }
-      for (let gy = 0; gy < WORLD_H; gy += 80) {
-        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(WORLD_W, gy); ctx.stroke();
-      }
-      // Glowing tubes on sides
-      for (let i = 0; i < 6; i++) {
-        const tx = 30 + i * (WORLD_W / 6);
-        const grad = ctx.createLinearGradient(tx, WORLD_H*0.4, tx, WORLD_H*0.78);
-        grad.addColorStop(0, 'rgba(0,200,255,0.0)');
-        grad.addColorStop(0.5, 'rgba(0,180,255,0.12)');
-        grad.addColorStop(1, 'rgba(0,200,255,0.0)');
-        ctx.fillStyle = grad;
-        ctx.fillRect(tx - 6, WORLD_H*0.4, 12, WORLD_H*0.38);
-      }
-    } else if (this.mapName === 'english') {
-      // Library: vertical bookshelf dividers
-      ctx.strokeStyle = 'rgba(120,70,20,0.22)';
-      ctx.lineWidth = 8;
-      for (let i = 0; i < 9; i++) {
-        const bx = (i+1) * (WORLD_W / 9);
-        ctx.beginPath(); ctx.moveTo(bx, 0); ctx.lineTo(bx, WORLD_H*0.82); ctx.stroke();
-      }
-      // Horizontal shelf lines
-      ctx.strokeStyle = 'rgba(160,100,40,0.18)';
-      ctx.lineWidth = 14;
-      for (let j = 0; j < 5; j++) {
-        const by = WORLD_H * (0.18 + j * 0.16);
-        ctx.beginPath(); ctx.moveTo(0, by); ctx.lineTo(WORLD_W, by); ctx.stroke();
-      }
-      // Warm candlelight glow from bottom
-      const candleGrad = ctx.createLinearGradient(0, WORLD_H*0.65, 0, WORLD_H);
-      candleGrad.addColorStop(0, 'rgba(180,90,20,0.0)');
-      candleGrad.addColorStop(1, 'rgba(180,80,10,0.18)');
-      ctx.fillStyle = candleGrad;
-      ctx.fillRect(0, WORLD_H*0.65, WORLD_W, WORLD_H*0.35);
-    } else if (this.mapName === 'pe') {
-      // Sports court lines on floor
-      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-      ctx.lineWidth = 3;
-      // Centre circle
-      ctx.beginPath();
-      ctx.arc(WORLD_W*0.5, WORLD_H*0.80, WORLD_W*0.12, 0, Math.PI*2);
-      ctx.stroke();
-      // Centre line
-      ctx.beginPath(); ctx.moveTo(WORLD_W*0.5, WORLD_H*0.70); ctx.lineTo(WORLD_W*0.5, WORLD_H*0.80); ctx.stroke();
-      // Side penalty boxes
-      ctx.strokeRect(WORLD_W*0.06, WORLD_H*0.72, WORLD_W*0.16, WORLD_H*0.08);
-      ctx.strokeRect(WORLD_W*0.78, WORLD_H*0.72, WORLD_W*0.16, WORLD_H*0.08);
-      // Grass stripes
-      ctx.fillStyle = 'rgba(30,120,30,0.07)';
-      for (let i = 0; i < 8; i++) {
-        if (i % 2 === 0) ctx.fillRect(i * (WORLD_W/8), 0, WORLD_W/8, WORLD_H);
-      }
-    } else if (this.mapName === 'math') {
-      // Graph paper grid
-      ctx.strokeStyle = 'rgba(100,80,255,0.07)';
-      ctx.lineWidth = 1;
-      for (let gx = 0; gx < WORLD_W; gx += 60) {
-        ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, WORLD_H); ctx.stroke();
-      }
-      for (let gy = 0; gy < WORLD_H; gy += 60) {
-        ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(WORLD_W, gy); ctx.stroke();
-      }
-      // Number line markers along the floor
-      ctx.strokeStyle = 'rgba(160,140,255,0.25)';
-      ctx.lineWidth = 2;
-      for (let i = 0; i <= 10; i++) {
-        const nx = WORLD_W * 0.04 + i * (WORLD_W * 0.92 / 10);
-        ctx.beginPath(); ctx.moveTo(nx, WORLD_H*0.75); ctx.lineTo(nx, WORLD_H*0.80); ctx.stroke();
-      }
-      // Glowing purple axis lines
-      ctx.strokeStyle = 'rgba(140,100,255,0.15)';
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(WORLD_W*0.5, 0); ctx.lineTo(WORLD_W*0.5, WORLD_H*0.80); ctx.stroke();
-    } else {
-      ctx.fillStyle = 'rgba(80,60,20,0.18)';
-      for (let i = 0; i < 12; i++) {
-        const px = 80 + i * (WORLD_W / 12);
-        const ph = 120 + Math.sin(i * 1.7) * 60;
-        ctx.fillRect(px - 18, WORLD_H * 0.78 - ph, 36, ph);
-        // Pillar cap
-        ctx.fillRect(px - 22, WORLD_H * 0.78 - ph, 44, 12);
-      }
-      // Grass/ground texture strip
-      const grassGrad = ctx.createLinearGradient(0, WORLD_H*0.77, 0, WORLD_H*0.80);
-      grassGrad.addColorStop(0, 'rgba(60,130,20,0.25)');
-      grassGrad.addColorStop(1, 'rgba(40,90,10,0.0)');
-      ctx.fillStyle = grassGrad;
-      ctx.fillRect(0, WORLD_H*0.77, WORLD_W, WORLD_H*0.06);
-    }
+
 
     // Decor background elements
     this.drawDecor(ctx);
@@ -2572,8 +2573,6 @@ class Game {
       ctx.globalAlpha = e.alpha;
       ctx.strokeStyle = e.color;
       ctx.lineWidth = 3;
-      ctx.shadowBlur = 12;
-      ctx.shadowColor = e.color;
       ctx.beginPath();
       ctx.arc(e.x, e.y, e.r, 0, Math.PI*2);
       ctx.stroke();
@@ -2654,21 +2653,18 @@ class Game {
         ctx.fill();
       }
 
-      // Top edge glow
+      // Top edge glow (no shadowBlur - use thick bright line instead for perf)
       const glowColor = this.mapName === 'science'
-        ? 'rgba(100,180,255,0.8)'
+        ? 'rgba(100,180,255,0.9)'
         : this.mapName === 'english'
-          ? 'rgba(255,180,80,0.8)'
-          : 'rgba(230,190,110,0.8)';
+          ? 'rgba(255,180,80,0.9)'
+          : 'rgba(230,190,110,0.9)';
       ctx.strokeStyle = glowColor;
-      ctx.lineWidth = isMain ? 2.5 : 2;
-      ctx.shadowBlur = isMain ? 8 : 5;
-      ctx.shadowColor = glowColor;
+      ctx.lineWidth = isMain ? 3 : 2.5;
       ctx.beginPath();
       ctx.moveTo(plat.x + 8, plat.y + 1);
       ctx.lineTo(plat.x + plat.w - 8, plat.y + 1);
       ctx.stroke();
-      ctx.shadowBlur = 0;
     });
   }
 
@@ -2680,9 +2676,7 @@ class Game {
         ctx.save();
         ctx.globalAlpha = alpha;
         ctx.strokeStyle = '#fff200';
-        ctx.lineWidth = 3 + Math.random() * 2;
-        ctx.shadowBlur = 20;
-        ctx.shadowColor = '#fff200';
+        ctx.lineWidth = 4 + Math.random() * 2;
         ctx.beginPath();
         let lx = e.x, ly = 0;
         ctx.moveTo(lx, ly);
@@ -2752,8 +2746,6 @@ class Game {
       equations.forEach(eq => {
         if (!eq.alive) return;
         ctx.save();
-        ctx.shadowBlur = 16;
-        ctx.shadowColor = '#8866ff';
         const grad = ctx.createLinearGradient(eq.x - eq.w/2, eq.y - eq.h/2, eq.x + eq.w/2, eq.y + eq.h/2);
         grad.addColorStop(0, '#3a1a80');
         grad.addColorStop(1, '#1a0a50');
@@ -2764,7 +2756,6 @@ class Game {
         ctx.roundRect(eq.x - eq.w/2, eq.y - eq.h/2, eq.w, eq.h, 6);
         ctx.fill();
         ctx.stroke();
-        ctx.shadowBlur = 0;
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 22px monospace';
         ctx.textAlign = 'center';
@@ -2780,8 +2771,6 @@ class Game {
       balls.forEach(b => {
         if (!b.alive) return;
         ctx.save();
-        ctx.shadowBlur = 14;
-        ctx.shadowColor = b.color;
         const grad = ctx.createRadialGradient(b.x - b.r*0.3, b.y - b.r*0.3, b.r*0.1, b.x, b.y, b.r);
         grad.addColorStop(0, b.color + 'dd');
         grad.addColorStop(1, b.color + '66');
