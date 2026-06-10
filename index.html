@@ -1540,7 +1540,7 @@ class Player {
 
     // Earth throw
     this.throwCooldown = 0;
-    this.throwCooldownMax = 18; // ~0.3s at 60fps
+    this.throwCooldownMax = 12; // ~0.2s at 60fps
 
     // Hitstun
     this.hitstun = 0;
@@ -1643,7 +1643,7 @@ class Player {
           this.startSwordAttack(opponent, stage);
         }
       } else if (this.char.attackType === 'earth') {
-        if (input.attack && this.throwCooldown <= 0) {
+        if (input.attackJustPressed && this.throwCooldown <= 0) {
           this.throwEarth(opponent);
           this.throwCooldown = this.throwCooldownMax;
         }
@@ -2150,13 +2150,14 @@ class Game {
     const attackNow = isAttack() || mobileKeys['attack'];
     const jumpJustPressed = jumpNow && !this.prevJump;
 
-    // Sword: attack on new press only. Earth: attack while held (limited by throwCooldown)
+    // Sword: attack on new press only. Earth: also just pressed for reliability
     const attackJustPressed = attackNow && !this.prevAttack;
     const playerInput = {
       left: isLeft(),
       right: isRight(),
       jumpJustPressed,
-      attack: this.player.char.attackType === 'sword' ? attackJustPressed : attackNow
+      attack: attackJustPressed,
+      attackJustPressed
     };
 
     this.prevJump = jumpNow;
